@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import correlate2d
 
@@ -33,23 +34,23 @@ def gray(img):
 
 ## Template matching
 
-def box_filter(img, size):
-    """img correlated with a size x size box normalized to sum to 1 (I-bar in Eq. (9))."""
-    # 'valid' mode: output [i, j] averages img[i:i+size, j:j+size], the patch under the template at (i, j).
+def box_filter(img, height, width):
+    """img correlated with a height x width box normalized to sum to 1 (I-bar in Eq. (9))."""
+    # 'valid' mode: output [i, j] averages img[i:i+height, j:j+width], the patch under the template at (i, j).
     # The box is separable, so a row box then a column box gives the same result with far fewer operations.
-    rows = correlate2d(img, np.ones((1, size)) / size, mode="valid")
-    return correlate2d(rows, np.ones((size, 1)) / size, mode="valid")
+    rows = correlate2d(img, np.ones((1, width)) / width, mode="valid")
+    return correlate2d(rows, np.ones((height, 1)) / height, mode="valid")
 
 def normalized_cross_correlation(g, I):
     """Eq. (9): h[i, j] for template g over image I, using only pixel-wise operations and correlate2d."""
     n = g.size
     g0 = g - g.mean()
-    I_bar = box_filter(I, g.shape[0])
+    I_bar = box_filter(I, *g.shape)
     # numerator: sum_kl g0[k,l] (I[i+k,j+l] - I_bar[i,j]) = (g0 correlated with I)[i,j] - I_bar[i,j] * sum(g0),
     # and sum(g0) = 0, so it is a single correlation
     num = correlate2d(I, g0, mode="valid")
     # sum_kl (I[i+k,j+l] - I_bar[i,j])^2 = n * (box(I^2) - I_bar^2)
-    var_I = n * np.maximum(box_filter(I ** 2, g.shape[0]) - I_bar ** 2, 0)
+    var_I = n * np.maximum(box_filter(I ** 2, *g.shape) - I_bar ** 2, 0)
     return num / np.sqrt(np.sum(g0 ** 2) * var_I + EPSILON)
 
 def find_shift(h, ref):
@@ -70,14 +71,14 @@ def shift_image(img, dy, dx):
         img[max(-dy, 0):H + min(-dy, 0), max(-dx, 0):W + min(-dx, 0)]
     return out
 
-def refocus(frames, row, col, size, window):
-    """Template from the middle frame at (row, col) (top-left corner), size x size; match it in a
+def refocus(frames, row, col, width, height, window):
+    """Template from the middle frame at (row, col) (top-left corner), width x height; match it in a
     window x window search window centered on it in every frame, shift each frame onto the
     middle frame, and average them. Returns the refocused image and the per-frame shifts."""
     N, H, W = frames.shape[:3]
-    g = gray(frames[N // 2])[row:row + size, col:col + size]
+    g = gray(frames[N // 2])[row:row + height, col:col + width]
     # search window centered on the template, clipped to the frame
-    r_c, c_c = row + size // 2, col + size // 2
+    r_c, c_c = row + height // 2, col + width // 2
     r0, r1 = max(r_c - window // 2, 0), min(r_c + window // 2, H)
     c0, c1 = max(c_c - window // 2, 0), min(c_c + window // 2, W)
     ref = (row - r0, col - c0)   # template's top-left corner in window coordinates
@@ -97,10 +98,19 @@ def refocus(frames, row, col, size, window):
     print(f"  shift range: rows [{shifts[:, 0].min()}, {shifts[:, 0].max()}], cols [{shifts[:, 1].min()}, {shifts[:, 1].max()}]")
     return total / np.maximum(coverage, 1), shifts
 
-def draw_box(img, row, col, size, color=(1.0, 0.0, 0.0), width=3):
+def draw_box(img, row, col, width, height, color=(1.0, 0.0, 0.0), thickness=3):
     img = img.copy()
-    cv2.rectangle(img, (col, row), (col + size, row + size), color, width)
+    cv2.rectangle(img, (col, row), (col + width, row + height), color, thickness)
     return img
+
+def pick_template(img):
+    """Click two opposite corners of a rectangle on img; returns (top, left, width, height)."""
+    plt.imshow(img)
+    endpoints = np.array(plt.ginput(2, timeout=0)).astype(int)
+    plt.close()
+    x0, y0 = endpoints.min(axis=0)
+    x1, y1 = endpoints.max(axis=0)
+    return y0, x0, x1 - x0, y1 - y0
 
 
 def main(argv=None):
@@ -109,9 +119,8 @@ def main(argv=None):
     parser.add_argument("--out", default="results/unstructured", help="Output folder")
     parser.add_argument("--step", type=int, default=1, help="Use every n-th frame")
     parser.add_argument("--scale", type=float, default=1.0, help="Resize frames by this factor first")
-    parser.add_argument("--template", type=int, nargs=2, action="append", metavar=("ROW", "COL"), default=[],
-                        help="Top-left corner of a template in the middle frame; repeat for several focus points")
-    parser.add_argument("--size", type=int, default=60, help="Template side in pixels")
+    parser.add_argument("--template", type=int, nargs=4, metavar=("TOP", "LEFT", "WIDTH", "HEIGHT"),
+                        help="Template rectangle in the middle frame; if omitted, pick it by clicking two corners")
     parser.add_argument("--window", type=int, default=200, help="Search window side in pixels")
     args = parser.parse_args(argv)
 
@@ -121,12 +130,18 @@ def main(argv=None):
     # pick template corners from this frame (e.g. hover over it in an image viewer)
     saveimg(middle, out / f"middle_frame_step{args.step}_scale{args.scale}.png")
 
-    for row, col in args.template:
-        tag = f"r{row}_c{col}_t{args.size}_w{args.window}_step{args.step}_scale{args.scale}"
-        result, shifts = refocus(frames, row, col, args.size, args.window)
-        saveimg(result, out / f"refocus_{tag}.png")
-        saveimg(draw_box(middle, row, col, args.size), out / f"template_{tag}.png")
-        np.save(out / f"shifts_{tag}.npy", shifts)
+    if args.template is None:
+        args.template = pick_template(middle)
+        print(f"Picked --template {' '.join(map(str, args.template))}")
+    row, col, width, height = args.template
+
+    # square templates keep the old t<side> tag so earlier results still match
+    t = f"{width}" if width == height else f"{width}x{height}"
+    tag = f"r{row}_c{col}_t{t}_w{args.window}_step{args.step}_scale{args.scale}"
+    result, shifts = refocus(frames, row, col, width, height, args.window)
+    saveimg(result, out / f"refocus_{tag}.png")
+    saveimg(draw_box(middle, row, col, width, height), out / f"template_{tag}.png")
+    np.save(out / f"shifts_{tag}.npy", shifts)
 
 
 if __name__ == "__main__":

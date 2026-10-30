@@ -46,13 +46,11 @@ python src/main.py --method confocal --apertures 2 4 6 8 10 12 14 16 --afi_pixel
 ## 2. Refocusing an unstructured lightfield: `src/unstructured.py`
 
 ```
-python src/unstructured.py --video data/part3/chipotle.mov --out results/unstructured/chipotle --step 2 --scale 0.25 \
-    --size 60 --window 140 --template 120 448 --template 330 375 --template 410 570 --template 270 800
-python src/unstructured.py --video data/part3/chipotle_bars.mov --out results/unstructured/chipotle_bars --step 3 --scale 0.25 \
-    --size 60 --window 140 --template 110 450 --template 325 380 --template 395 610
-python src/unstructured.py --video data/part3/hamerschlag.mov --out results/unstructured/hamerschlag \
-    --step 2 --scale 0.5 --size 60 --window 260 --template 170 515 --template 100 588 --template 110 90
+python src/unstructured.py --video data/part3/chipotle.mov --out results/unstructured/chipotle \
+    --step 2 --scale 0.25 --window 140 --template 120 448 60 60
 ```
+
+Leave out `--template` to pick the rectangle by clicking two opposite corners on the middle frame.
 
 Eq. (9) is computed with `correlate2d` in `valid` mode: the numerator is the window correlated with
 the zero-mean template (the `I-bar` term drops out since the zero-mean template sums to 0), and
@@ -64,24 +62,47 @@ the zero-mean template (the `I-bar` term drops out since the zero-mean template 
 | `--video` | input video | required |
 | `--step` | use every n-th frame | `1` |
 | `--scale` | resize frames first | `1.0` |
-| `--template ROW COL` | top-left corner of a template in the middle frame; repeat for several focus points | none |
-| `--size` | template side (px) | `60` |
+| `--template TOP LEFT WIDTH HEIGHT` | template rectangle in the middle frame | pick it by clicking two opposite corners (prints the matching `--template` values) |
 | `--window` | search window side (px) | `200` |
 
 It saves the middle frame (`middle_frame_*.png`, for picking template
-coordinates) and, for each template, `refocus_*.png`, `template_*.png` (the
+coordinates), `refocus_*.png`, `template_*.png` (the
 template box on the middle frame) and the per-frame shifts `shifts_*.npy`.
 
-TODO: how the video was captured (device, settings, motion).
+**Capture.** All three videos were filmed with a phone (TODO: model and app) as 10-bit HDR (HLG);
+OpenCV decodes them to 8-bit RGB. For `chipotle.mov` the phone was pressed against a window and slid in a
+zig-zag; `hamerschlag.mov` was filmed hand-held, also in a zig-zag. TODO: how `chipotle_bars.mov` was moved.
 
 ## 3. Capturing a focal-aperture stack (bonus): `src/take_focal_stack.py`
 
-TODO
+```
+python src/take_focal_stack.py --folder squash --ss 1/125
+```
+
+Captures a focal-aperture stack with `gphoto2` over USB (tested with a Nikon D3400). It turns off
+auto ISO and sets `--iso` and `--quality`, then sweeps the focus once per aperture in `--apertures`.
+The shutter speed is scaled by `N^2` from `--ss` (the speed for the first aperture) so `t / N^2` stays
+constant, rounded to the closest speed the camera offers. Each sweep runs in one `gphoto2 --shell`
+session, since manual focus driving only works in live view: it drives the focus to the end of its
+range, then takes `--n_steps` shots, stepping the focus by `--focus_step` between them. Images are saved as
+`<folder>/f<N>_<index>.nef` / `.jpg`, with index 0 focused farthest. Set the camera's live-view focus mode
+to AF-S first. On macOS the script kills `ptpcamerad` before every `gphoto2` call, since it claims the
+camera. At the end it warns about sweeps that missed shots or focus steps.
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--folder` | output folder | required |
+| `--apertures` | f-numbers to sweep | `1.8 4 9 22` |
+| `--n_steps` | focus settings per aperture | `30` |
+| `--focus_step` | `manualfocusdrive` step between shots | `150` |
+| `--ss` | shutter speed at the first aperture | `1/60` |
+| `--iso` | ISO | `400` |
+| `--quality` | `raw`, `jpeg` or `both` | `both` |
 
 ## 4. Processing the focal-aperture stack (bonus): `src/focal_aperture.py`
 
 ```
-python src/focal_aperture.py --folder squash --afi_pixels 200,300 300,500
+python src/focal_aperture.py --folder squash --focus_range 5 22 --afi_pixels 50,478 379,712
 ```
 
 It reads the `f<N>_<index>.nef` captures (linear, via `rawpy`) and divides each by its `t / N^2`
@@ -105,9 +126,11 @@ reuses the cached aligned stack.
 
 ## Submitted data (`data/`)
 
-TODO
+The provided lightfield and the raw focal-aperture captures (`squash/`, 3.7 GB) are not included. Images are
+JPEG copies of the PNG results, with the result file names, so the settings are in each name.
 
 | Folder | Contents |
 |---|---|
-| `part1/` | TODO |
+| `part1/` | `mosaic.jpg` (sub-aperture mosaic); `refocus/refocus_d<d>.jpg`, the full 41-depth focal stack with the full aperture; `allfocus_*.jpg` and `depth_*.jpg` for sigma1 = 0.5, 1, 2, 4, 8 (sigma2 = 4) and sigma2 = 1, 2, 4, 8, 16 (sigma1 = 2); the focal-aperture `collage_*.jpg`; `afi_s<s>_t<t>_*.jpg`; and the confocal stereo depth `depth_confocal_*.jpg`. |
 | `part3/` | The three videos (`chipotle.mov`, `chipotle_bars.mov`, `hamerschlag.mov`) and the refocused images, named `<video>_<tag>.jpg` with the tag of `refocus_<tag>.png`. `chipotle_bars.mov` is re-encoded (HEVC, CRF 24, same resolution and HLG) to fit GitHub's 100 MB limit; the original was 113 MB. |
+| `part4/` | Bonus focal-aperture stack (`squash`, focus settings 5-22): example frames `frame_f<N>_<index>_*.jpg`, `collage_*.jpg`, `afi_*.jpg`, the all-in-focus image `allfocus_*.jpg`, and the depth-from-focus `depth_*.jpg` and confocal `depth_confocal_*.jpg` depths. |
