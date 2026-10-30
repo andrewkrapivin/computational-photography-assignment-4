@@ -1,0 +1,32 @@
+# system / build files
+.DS_Store
+__pycache__/
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+
+# assignment writeup and provided data (must not be submitted)
+assgn4.pdf
+data/chessboard_lightfield.png
+data/chessboard_lightfield.zip
+
+# working folders (experiments, intermediate outputs, cached focal stacks); submitted images are in data/part*/
+scratch/
+results/
+
+# report sources and the local helper that builds its figures (only report.pdf is submitted)
+report.tex
+figures/
+src/make_report_figures.py
+
+# raw focal-aperture captures (7 GB) and original phone videos; submitted copies of the videos are in data/part3/
+squash/
+squash2/
+/*.mov
+lenslet_diagram.png
+
+# early sub-aperture outputs, superseded by data/part1/
+data/subaperture/
