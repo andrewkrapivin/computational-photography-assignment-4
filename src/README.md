@@ -106,10 +106,7 @@ python src/focal_aperture.py --folder squash --focus_range 5 22 --afi_pixels 50,
 ```
 
 It reads the `f<N>_<index>.nef` captures (linear, via `rawpy`) and divides each by its `t / N^2`
-from the EXIF. Brightness still jumps by up to ~35% between shots, so it scales each shot to the
-same mean over the central half of the frame, then corrects the remaining per-pixel exitance
-differences (vignetting) between apertures,
-and aligns the magnification change across focus settings with a global scale and shift estimated
+from the EXIF, so every aperture shares one radiometric scale (the exitance of Eq. (7)). It then aligns the magnification change across focus settings with a global scale and shift estimated
 by ECC on the smallest aperture. It writes the collage, AFIs, example frames, the depth-from-focus
 depth and all-in-focus image (largest aperture), and the confocal stereo depth to
 `results/focal_aperture/<folder>/`. Depth is in units of focus setting index. `--skip_load`
@@ -118,11 +115,9 @@ reuses the cached aligned stack.
 | Flag | Meaning | Default |
 |---|---|---|
 | `--width` | resize images to this width | `800` |
-| `--exitance_sigma` | blur of the per-pixel exitance estimate (`0`: one gain per aperture) | `40` |
 | `--no_align` | skip the alignment | off |
 | `--focus_range FIRST LAST` | only use these focus settings (where something is in focus) | all |
 | `--sigma1`, `--sigma2` | Gaussian sigmas of Eqs. (4) and (6) | `2`, `4` |
-| `--confocal_sigma` | blur of the confocal cost before the argmin | `2` |
 
 ## Submitted data (`data/`)
 

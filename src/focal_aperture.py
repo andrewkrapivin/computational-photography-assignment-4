@@ -6,7 +6,6 @@ import cv2
 import numpy as np
 import rawpy
 from PIL import Image
-from scipy.ndimage import gaussian_filter
 
 from main import (saveimg, gamma_encode, gamma_decode, luminance, tile_grid, sharpness_weights,
                   all_in_focus, depth_from_focus, confocal_depth, depth_to_img)
@@ -62,29 +61,7 @@ def load_fa_stack(folder, width):
     return np.stack(rows), f_numbers
 
 
-## Radiometric calibration and alignment
-
-def normalize_exitance(fa_stack, sigma):
-    """Divide out what t / N^2 misses: per-pixel exitance differences between apertures, mostly
-    vignetting. Each aperture's average over focus settings, heavily blurred so defocus does not
-    matter, is compared to the smallest aperture's (the last row). sigma = 0 uses a single gain.
-    First, each shot is scaled to the same mean over the central half of the frame: defocus only
-    spreads light around, so that mean should not change, but the captures jump by up to ~35% from
-    shot to shot (lighting changes, or exposures off from their EXIF values)."""
-    h, w = fa_stack.shape[2:4]
-    center = fa_stack[:, :, h // 4:3 * h // 4, w // 4:3 * w // 4].mean(axis=(2, 3, 4))
-    print(f"per-shot gain: {(center / center.mean()).min():.3f}-{(center / center.mean()).max():.3f}")
-    fa_stack *= (center.mean() / center)[:, :, None, None, None]
-    ref = luminance(fa_stack[-1].mean(0))
-    for a in range(len(fa_stack)):
-        mean = luminance(fa_stack[a].mean(0))
-        if sigma > 0:
-            gain = gaussian_filter(mean, sigma) / gaussian_filter(ref, sigma)
-        else:
-            gain = np.full_like(mean, mean.mean() / ref.mean())
-        print(f"aperture row {a}: exitance gain {gain.min():.3f}-{gain.max():.3f}")
-        fa_stack[a] /= gain[None, :, :, None]
-    return fa_stack
+## Alignment
 
 def similarity(warp, center):
     """The global scaling (plus translation) closest to an affine warp: same scale about the image
@@ -147,14 +124,10 @@ def main(argv=None):
     parser.add_argument("--width", type=int, default=800, help="Resize images to this width first")
     parser.add_argument("--skip_load", action="store_true", help="Load the cached aligned stack instead of the captures")
     parser.add_argument("--no_align", action="store_true", help="Skip the magnification alignment")
-    parser.add_argument("--exitance_sigma", type=float, default=40,
-                        help="Blur (px) of the per-pixel exitance estimate; 0 uses one gain per aperture")
     parser.add_argument("--focus_range", type=int, nargs=2, metavar=("FIRST", "LAST"),
                         help="Only use focus settings FIRST..LAST (inclusive), e.g. the ones where something is in focus")
     parser.add_argument("--sigma1", type=float, default=2.0, help="sigma_1 of the low-pass blur, Eq. (4)")
     parser.add_argument("--sigma2", type=float, default=4.0, help="sigma_2 of the sharpness blur, Eq. (6)")
-    parser.add_argument("--confocal_sigma", type=float, default=2.0,
-                        help="Blur of the confocal cost before the argmin; 0 is purely per-pixel")
     parser.add_argument("--collage_step", type=int, default=3, help="Show every n-th focus setting in the collage")
     parser.add_argument("--collage_width", type=int, default=200, help="Width of each collage tile")
     parser.add_argument("--afi_pixels", type=lambda p: tuple(int(x) for x in p.split(",")), nargs="*",
@@ -164,7 +137,7 @@ def main(argv=None):
 
     out = Path(args.out or f"results/focal_aperture/{Path(args.folder).name}")
     out.mkdir(parents=True, exist_ok=True)
-    tag = f"w{args.width}_e{args.exitance_sigma:g}" + ("_noalign" if args.no_align else "")
+    tag = f"w{args.width}" + ("_noalign" if args.no_align else "")
     cache = out / f"fa_stack_{tag}.npz"
 
     if args.skip_load and cache.is_file():
@@ -173,7 +146,6 @@ def main(argv=None):
         fa_stack, f_numbers = data["fa_stack"], list(data["f_numbers"])
     else:
         fa_stack, f_numbers = load_fa_stack(args.folder, args.width)
-        fa_stack = normalize_exitance(fa_stack, args.exitance_sigma)
         if not args.no_align:
             warps = estimate_alignment(fa_stack[-1])
             np.save(out / f"warps_{tag}.npy", warps)
@@ -210,11 +182,10 @@ def main(argv=None):
     np.save(out / f"depth_{dff_tag}.npy", depth)
     saveimg(depth_to_img(depth, ds), out / f"depth_{dff_tag}.png")
 
-    # confocal stereo on all apertures; the stack is already divided by each aperture's exitance
-    depth = confocal_depth(fa_stack, ds, f_numbers, None, sigma=args.confocal_sigma)
-    conf_tag = f"cs{args.confocal_sigma:g}_{tag}"
-    np.save(out / f"depth_confocal_{conf_tag}.npy", depth)
-    saveimg(depth_to_img(depth, ds), out / f"depth_confocal_{conf_tag}.png")
+    # confocal stereo on all apertures; dividing by t / N^2 already normalized each aperture's exitance
+    depth = confocal_depth(fa_stack, ds, f_numbers, None)
+    np.save(out / f"depth_confocal_{tag}.npy", depth)
+    saveimg(depth_to_img(depth, ds), out / f"depth_confocal_{tag}.png")
 
 
 if __name__ == "__main__":

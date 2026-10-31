@@ -75,7 +75,6 @@ def tile_grid(grid):
     """Arrange a grid of images grid[i, j] (shape (I, J, H, W, 3)) into one (I*H, J*W, 3) image,
     with i increasing downward and j to the right. Used for the sub-aperture mosaic and the
     focal-aperture collage."""
-    # TODO (Sub-aperture views)
     l, m = grid.shape[0], grid.shape[1]
     w,h = grid.shape[2], grid.shape[3]
     tiles = grid.transpose(0,2,1,3,4).reshape(w*l, h*m, 3)
@@ -168,17 +167,15 @@ def afi(fa_stack, s, t):
     """Aperture-focus image of pixel (s, t): rows are apertures, columns focus settings, shape (A, D, 3)."""
     return fa_stack[:, :, s, t]
 
-def confocal_depth(fa_stack, ds, apertures, shape, sigma=0):
+def confocal_depth(fa_stack, ds, apertures, shape):
     """Hasinoff and Kutulakos Eqs. (7) and (8): per-pixel depth from the AFIs.
     E_xy for each aperture is the number of (u, v) pairs in A. refocus() already divides by |A|,
-    so do not normalize again here. sigma > 0 blurs the per-pixel cost spatially before the argmin."""
+    so do not normalize again here."""
     # Eq. (7): in focus, the exitance-normalized intensity is the same for every aperture, so score
     # each focus setting by the variance across apertures (summed over color channels)
     var = np.zeros(fa_stack.shape[1:4], dtype=np.float32)
     for c in range(fa_stack.shape[-1]):   # per channel to keep the float32 stack from being copied
         var += fa_stack[..., c].var(axis=0)
-    if sigma > 0:
-        var = gaussian_filter(var, (0, sigma, sigma))
     # Eq. (8): depth is the focus setting with the most consistent AFI column
     return np.asarray(ds)[np.argmin(var, axis=0)]
 
